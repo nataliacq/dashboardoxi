@@ -792,34 +792,34 @@ def get_default_excel_path():
 def main():
     st.markdown(f"<div class='main-title'>{PAGE_TITLE}</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div class='subtitle'>Prueba de concepto para seguimiento de proyectos, documentos, etapas e hitos con cronograma programado vs real.</div>",
+        "<div class='subtitle'>Prueba de concepto </div>",
         unsafe_allow_html=True,
     )
-#    st.sidebar.header("Fuente de datos")
-#    uploaded_file = st.sidebar.file_uploader("Subir Excel (.xlsx / .xlsm)", type=["xlsx", "xlsm"])
-#    excel_path = st.sidebar.text_input(
-#        "Ruta local del Excel",
-#        value=get_default_excel_path(),
-#        help="Por defecto, el dashboard busca el archivo OXI ESTADO.xlsm en la misma carpeta donde está este script.",
-#    )
+    st.sidebar.header("Fuente de datos")
+    uploaded_file = st.sidebar.file_uploader("Subir Excel (.xlsx / .xlsm)", type=["xlsx", "xlsm"])
+    excel_path = st.sidebar.text_input(
+        "Ruta local del Excel",
+        value=get_default_excel_path(),
+        help="Por defecto, el dashboard busca el archivo OXI ESTADO.xlsm en la misma carpeta donde está este script.",
+    )
 
-#    try:
-#        if uploaded_file is not None:
-#            raw = load_data_from_bytes(uploaded_file.getvalue())
-#            source_label = uploaded_file.name
-#        else:
-#            raw = load_data_from_path(excel_path)
-#            source_label = excel_path
-#    except Exception as exc:
-#        st.error(f"No se pudo leer el Excel: {exc}")
-#        st.stop()
-#
-#    try:
-#        prepared = prepare_data(raw)
-#        milestones, stages_df, summary_df, current_project = build_demo_schedule(prepared)
-#    except Exception as exc:
-#        st.error(f"No se pudo transformar la información: {exc}")
-#        st.stop()
+    try:
+        if uploaded_file is not None:
+            raw = load_data_from_bytes(uploaded_file.getvalue())
+            source_label = uploaded_file.name
+        else:
+            raw = load_data_from_path(excel_path)
+            source_label = excel_path
+    except Exception as exc:
+        st.error(f"No se pudo leer el Excel: {exc}")
+        st.stop()
+
+    try:
+        prepared = prepare_data(raw)
+        milestones, stages_df, summary_df, current_project = build_demo_schedule(prepared)
+    except Exception as exc:
+        st.error(f"No se pudo transformar la información: {exc}")
+        st.stop()
 
     st.sidebar.caption(f"Info: {source_label}")
     st.sidebar.caption("Info:")
