@@ -821,9 +821,9 @@ def main():
         st.error(f"No se pudo transformar la información: {exc}")
         st.stop()
 
-    st.sidebar.caption(f"Info: {source_label}")
-    st.sidebar.caption("Info:")
-    st.sidebar.caption(f"Info: {', '.join(prepared['sheet_names'])}")
+    #st.sidebar.caption(f"Info: {source_label}")
+    #st.sidebar.caption("Info:")
+    #st.sidebar.caption(f"Info: {', '.join(prepared['sheet_names'])}")
     st.sidebar.info(
         f"Demo: {current_project}."
     )
