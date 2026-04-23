@@ -822,11 +822,11 @@ def main():
         st.error(f"No se pudo transformar la información: {exc}")
         st.stop()
 
-    st.sidebar.caption(f"Archivo cargado: {source_label}")
-    st.sidebar.caption("Sugerencia: coloca OXI ESTADO.xlsm en la misma carpeta que este .py para no depender de rutas largas.")
-    st.sidebar.caption(f"Hojas detectadas: {', '.join(prepared['sheet_names'])}")
+    st.sidebar.caption(f"Info: {source_label}")
+    st.sidebar.caption("Info:")
+    st.sidebar.caption(f"Info: {', '.join(prepared['sheet_names'])}")
     st.sidebar.info(
-        f"La demo usa los datos reales disponibles y completa los faltantes con fechas consistentes. El proyecto más reciente se marca con un retraso controlado de 2 días hábiles: {current_project}."
+        f"Demo: {current_project}."
     )
 
     milestones_f, stages_f, summary_f = filter_data(milestones, stages_df, summary_df)
