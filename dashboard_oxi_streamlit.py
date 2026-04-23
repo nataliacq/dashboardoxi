@@ -797,11 +797,11 @@ def main():
     )
     #st.sidebar.header("Fuente de datos")
     uploaded_file = st.sidebar.file_uploader("Subir Excel (.xlsx / .xlsm)", type=["xlsx", "xlsm"])
-    excel_path = st.sidebar.text_input(
-        "Ruta local del Excel",
-        value=get_default_excel_path(),
-        help="Por defecto, el dashboard busca el archivo OXI ESTADO.xlsm en la misma carpeta donde está este script.",
-    )
+ #   excel_path = st.sidebar.text_input(
+  #      "Ruta local del Excel",
+   #     value=get_default_excel_path(),
+    #    help="Por defecto, el dashboard busca el archivo OXI ESTADO.xlsm en la misma carpeta donde está este script.",
+    #)
 
     try:
         if uploaded_file is not None:
