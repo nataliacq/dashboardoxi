@@ -795,7 +795,7 @@ def main():
         "<div class='subtitle'>Prueba de concepto </div>",
         unsafe_allow_html=True,
     )
-    st.sidebar.header("Fuente de datos")
+    #st.sidebar.header("Fuente de datos")
     uploaded_file = st.sidebar.file_uploader("Subir Excel (.xlsx / .xlsm)", type=["xlsx", "xlsm"])
     excel_path = st.sidebar.text_input(
         "Ruta local del Excel",
