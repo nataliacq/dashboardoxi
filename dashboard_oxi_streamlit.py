@@ -53,6 +53,7 @@ TIPOS_VALIDOS = {"inicio y fin", "solo inicio"}
 COLOR_FASE = "#374151"
 COLOR_TAREA = "#3B82F6"
 COLOR_HITO = "#DC2626"
+COLOR_PROGRAMADO = "#9CA3AF"
 
 st.set_page_config(page_title="Estado OXI", layout="wide")
 st.title("Estado OXI")
@@ -76,6 +77,8 @@ def cargar_estado() -> pd.DataFrame:
     col_tipo = find_col(df, "Tipo tarea si tarea tiene:", "Tipo tarea Tiene:", "Tipo tarea")
     col_inicio = find_col(df, "Fecha solicitud")
     col_fin = find_col(df, "Fecha recepción", "Fecha recepcion")
+    col_plazo = find_col(df, "Plazo referencial dias calendario", "Plazo referencial DC",
+                         "Plazo referencial", "Plazo")
 
     # Salvaguarda: si todavía queda una fila de notas (Tipo tarea inválido), la quitamos.
     if not df.empty:
@@ -85,6 +88,7 @@ def cargar_estado() -> pd.DataFrame:
 
     df[col_inicio] = df[col_inicio].apply(parse_fecha)
     df[col_fin] = df[col_fin].apply(parse_fecha)
+    df[col_plazo] = pd.to_numeric(df[col_plazo], errors="coerce")
     df["_tipo"] = df[col_tipo].astype(str).str.strip().str.lower()
 
     # Adjuntamos el mapeo de nombres canónicos para que el resto del script lo use.
@@ -95,6 +99,7 @@ def cargar_estado() -> pd.DataFrame:
         "tipo": col_tipo,
         "inicio": col_inicio,
         "fin": col_fin,
+        "plazo": col_plazo,
     }
     return df
 
@@ -114,6 +119,7 @@ COL_TAREA = cols["tarea"]
 COL_TIPO = cols["tipo"]
 COL_INICIO = cols["inicio"]
 COL_FIN = cols["fin"]
+COL_PLAZO = cols["plazo"]
 
 proyectos = sorted([p for p in df[COL_PROYECTO].dropna().unique() if str(p).strip()])
 if not proyectos:
@@ -124,6 +130,36 @@ proyecto_sel = st.sidebar.selectbox("Proyecto", proyectos)
 df_p = df[df[COL_PROYECTO] == proyecto_sel].copy()
 
 fases_orden = df_p[COL_FASE].dropna().drop_duplicates().tolist()
+
+# Cálculo de fechas programadas (días hábiles, lun-vie) por fase y tarea.
+# Ancla: primera "Fecha solicitud" real de la primera tarea "Inicio y fin" de la fase.
+# Cada tarea "Inicio y fin" siguiente arranca donde terminó la programación de la anterior.
+# Las "Solo inicio" no tienen plazo y no se programan.
+sched_phase: dict = {}
+sched_task: dict = {}
+for fase in fases_orden:
+    sub = df_p[df_p[COL_FASE] == fase]
+    anchor = None
+    for _, rr in sub.iterrows():
+        if rr["_tipo"] == "inicio y fin" and pd.notna(rr[COL_INICIO]):
+            anchor = pd.Timestamp(rr[COL_INICIO])
+            break
+    if anchor is None:
+        continue
+    cursor = anchor
+    fin_fase = anchor
+    for _, rr in sub.iterrows():
+        if rr["_tipo"] != "inicio y fin":
+            continue
+        plazo = rr.get(COL_PLAZO)
+        if pd.isna(plazo):
+            continue
+        sched_end = cursor + pd.tseries.offsets.BDay(int(plazo))
+        sched_task[(fase, str(rr[COL_TAREA]).strip())] = {"start": cursor, "end": sched_end}
+        cursor = sched_end
+        if sched_end > fin_fase:
+            fin_fase = sched_end
+    sched_phase[fase] = {"start": anchor, "end": fin_fase}
 
 rows = []
 for fase in fases_orden:
@@ -139,6 +175,7 @@ for fase in fases_orden:
             "kind": "phase",
             "start": fase_inicio,
             "end": fase_fin,
+            "sched": sched_phase.get(fase),
         })
     for _, r in sub.iterrows():
         tarea = str(r[COL_TAREA]).strip()
@@ -148,12 +185,14 @@ for fase in fases_orden:
                 rows.append({
                     "label": label, "fase": fase, "tarea": tarea, "kind": "milestone",
                     "start": r[COL_INICIO], "end": r[COL_INICIO],
+                    "sched": None,
                 })
         else:
             if pd.notna(r[COL_INICIO]) and pd.notna(r[COL_FIN]):
                 rows.append({
                     "label": label, "fase": fase, "tarea": tarea, "kind": "task",
                     "start": r[COL_INICIO], "end": r[COL_FIN],
+                    "sched": sched_task.get((fase, tarea)),
                 })
 
 if not rows:
@@ -164,65 +203,104 @@ n = len(rows)
 for i, r in enumerate(rows):
     r["y"] = n - 1 - i  # primer item de la lista queda arriba
 
-# Rango del eje X a partir de todas las fechas presentes
+# Rango del eje X a partir de todas las fechas presentes (reales y programadas)
 all_dates = []
 for r in rows:
     all_dates.append(r["start"])
     all_dates.append(r["end"])
+    if r.get("sched"):
+        all_dates.append(r["sched"]["start"])
+        all_dates.append(r["sched"]["end"])
 date_min = min(all_dates)
 date_max = max(all_dates)
 pad = max((date_max - date_min) * 0.05, pd.Timedelta(days=1))
 
 fig = go.Figure()
 
-# Rectángulos (fases y tareas) como shapes — más fiables que go.Bar para fechas
+# Rectángulos como shapes. Real arriba, Programado abajo dentro de cada fila.
+# Fase real: y+0.02..y+0.20  | Fase programada: y-0.20..y-0.02
+# Tarea real: y+0.02..y+0.34 | Tarea programada: y-0.34..y-0.02
 for r in rows:
     if r["kind"] == "phase":
         fig.add_shape(
             type="rect",
             x0=r["start"], x1=r["end"],
-            y0=r["y"] - 0.18, y1=r["y"] + 0.18,
-            fillcolor=COLOR_FASE,
-            line=dict(width=0),
-            layer="above",
+            y0=r["y"] + 0.02, y1=r["y"] + 0.20,
+            fillcolor=COLOR_FASE, line=dict(width=0), layer="above",
         )
+        if r.get("sched"):
+            fig.add_shape(
+                type="rect",
+                x0=r["sched"]["start"], x1=r["sched"]["end"],
+                y0=r["y"] - 0.20, y1=r["y"] - 0.02,
+                fillcolor=COLOR_PROGRAMADO, line=dict(width=0), layer="above",
+            )
     elif r["kind"] == "task":
         fig.add_shape(
             type="rect",
             x0=r["start"], x1=r["end"],
-            y0=r["y"] - 0.32, y1=r["y"] + 0.32,
-            fillcolor=COLOR_TAREA,
-            line=dict(width=0),
-            layer="above",
+            y0=r["y"] + 0.02, y1=r["y"] + 0.34,
+            fillcolor=COLOR_TAREA, line=dict(width=0), layer="above",
         )
+        if r.get("sched"):
+            fig.add_shape(
+                type="rect",
+                x0=r["sched"]["start"], x1=r["sched"]["end"],
+                y0=r["y"] - 0.34, y1=r["y"] - 0.02,
+                fillcolor=COLOR_PROGRAMADO, line=dict(width=0), layer="above",
+            )
 
-# Capa transparente para hover sobre los rectángulos
+# Capa transparente para hover (real arriba, programado abajo)
 for r in rows:
     if r["kind"] == "phase":
-        center = r["start"] + (r["end"] - r["start"]) / 2
+        center_real = r["start"] + (r["end"] - r["start"]) / 2
         fig.add_trace(go.Scatter(
-            x=[center], y=[r["y"]],
+            x=[center_real], y=[r["y"] + 0.11],
             mode="markers",
-            marker=dict(size=22, color="rgba(0,0,0,0)"),
+            marker=dict(size=18, color="rgba(0,0,0,0)"),
             showlegend=False,
-            hovertemplate=(f"<b>Fase:</b> {r['fase']}<br>"
+            hovertemplate=(f"<b>Fase:</b> {r['fase']} (real)<br>"
                            f"{r['start'].strftime('%d/%m/%Y')} → "
                            f"{r['end'].strftime('%d/%m/%Y')}<extra></extra>"),
         ))
+        if r.get("sched"):
+            s = r["sched"]
+            center_s = s["start"] + (s["end"] - s["start"]) / 2
+            fig.add_trace(go.Scatter(
+                x=[center_s], y=[r["y"] - 0.11],
+                mode="markers",
+                marker=dict(size=18, color="rgba(0,0,0,0)"),
+                showlegend=False,
+                hovertemplate=(f"<b>Fase:</b> {r['fase']} (programado)<br>"
+                               f"{s['start'].strftime('%d/%m/%Y')} → "
+                               f"{s['end'].strftime('%d/%m/%Y')}<extra></extra>"),
+            ))
     elif r["kind"] == "task":
-        center = r["start"] + (r["end"] - r["start"]) / 2
+        center_real = r["start"] + (r["end"] - r["start"]) / 2
         fig.add_trace(go.Scatter(
-            x=[center], y=[r["y"]],
+            x=[center_real], y=[r["y"] + 0.18],
             mode="markers",
             marker=dict(size=22, color="rgba(0,0,0,0)"),
             showlegend=False,
-            hovertemplate=(f"<b>{r['tarea']}</b><br>"
+            hovertemplate=(f"<b>{r['tarea']}</b> (real)<br>"
                            f"{r['start'].strftime('%d/%m/%Y')} → "
                            f"{r['end'].strftime('%d/%m/%Y')}<extra></extra>"),
         ))
+        if r.get("sched"):
+            s = r["sched"]
+            center_s = s["start"] + (s["end"] - s["start"]) / 2
+            fig.add_trace(go.Scatter(
+                x=[center_s], y=[r["y"] - 0.18],
+                mode="markers",
+                marker=dict(size=22, color="rgba(0,0,0,0)"),
+                showlegend=False,
+                hovertemplate=(f"<b>{r['tarea']}</b> (programado)<br>"
+                               f"{s['start'].strftime('%d/%m/%Y')} → "
+                               f"{s['end'].strftime('%d/%m/%Y')}<extra></extra>"),
+            ))
     elif r["kind"] == "milestone":
         fig.add_trace(go.Scatter(
-            y=[r["y"]], x=[r["start"]],
+            y=[r["y"] + 0.18], x=[r["start"]],
             mode="markers",
             marker=dict(symbol="diamond", size=14, color=COLOR_HITO,
                         line=dict(color="#7F1D1D", width=1)),
@@ -233,15 +311,17 @@ for r in rows:
 
 # Leyenda manual
 fig.add_trace(go.Bar(x=[None], y=[None], marker_color=COLOR_FASE,
-                    name="Fase", showlegend=True))
+                    name="Fase (real)", showlegend=True))
 fig.add_trace(go.Bar(x=[None], y=[None], marker_color=COLOR_TAREA,
-                    name="Tarea", showlegend=True))
+                    name="Tarea (real)", showlegend=True))
+fig.add_trace(go.Bar(x=[None], y=[None], marker_color=COLOR_PROGRAMADO,
+                    name="Programado", showlegend=True))
 fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers",
                          marker=dict(symbol="diamond", size=12, color=COLOR_HITO),
                          name="Hito (solo inicio)", showlegend=True))
 
 fig.update_layout(
-    height=max(380, 32 * n + 120),
+    height=max(420, 42 * n + 120),
     margin=dict(l=10, r=10, t=40, b=10),
     xaxis=dict(
         type="date",
