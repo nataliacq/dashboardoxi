@@ -113,6 +113,7 @@ except Exception as exc:
     st.stop()
 
 cols = df.attrs["cols"]
+
 COL_PROYECTO = cols["proyecto"]
 COL_FASE = cols["fase"]
 COL_TAREA = cols["tarea"]
