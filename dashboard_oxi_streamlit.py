@@ -155,6 +155,58 @@ def add_period_trace(
     )
 
 
+def add_highlight_business_window(
+    fig: go.Figure,
+    start,
+    business_days: int,
+    y0: float,
+    y1: float,
+    fill_color: str,
+    visible_start: float,
+    visible_end: float,
+    label: str,
+):
+    if pd.isna(start):
+        return
+
+    start_ts = pd.Timestamp(start)
+    end_ts = start_ts + pd.tseries.offsets.BDay(max(business_days - 1, 0))
+    start_num = day_num(start_ts)
+    end_num = day_num(end_ts)
+
+    if end_num < visible_start or start_num > visible_end:
+        return
+
+    clipped_start = max(start_num, visible_start)
+    clipped_end = min(end_num, visible_end)
+    fig.add_shape(
+        type="rect",
+        x0=clipped_start,
+        x1=clipped_end,
+        y0=y0,
+        y1=y1,
+        fillcolor=fill_color,
+        line=dict(width=0),
+        layer="above",
+    )
+    center_x = clipped_start + (clipped_end - clipped_start) / 2
+    center_y = (y0 + y1) / 2
+    fig.add_trace(
+        go.Scatter(
+            x=[center_x],
+            y=[center_y],
+            mode="markers",
+            marker=dict(size=18, color="rgba(0,0,0,0)"),
+            showlegend=False,
+            hovertemplate=(
+                f"<b>{label}</b><br>Plazo maximo: "
+                f"{start_ts.strftime('%d/%m/%Y')} -> {end_ts.strftime('%d/%m/%Y')}"
+                "<extra></extra>"
+            ),
+        )
+    )
+
+
 st.set_page_config(page_title="Estado OXI", layout="wide")
 st.title("Estado OXI")
 
@@ -179,11 +231,7 @@ except Exception as exc:
     st.error(f"No se pudo cargar el calendario de semanas: {exc}")
     st.stop()
 
-tab_resumen, tab_estado = st.tabs(["Resumen de proyectos", "Estado por proyecto"])
-
-with tab_resumen:
-    st.subheader("Resumen de proyectos")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+tab_estado, tab_resumen = st.tabs(["Estado por proyecto", "Resumen de proyectos"])
 
 with tab_estado:
     st.subheader("Estado por proyecto")
@@ -195,9 +243,19 @@ with tab_estado:
         st.warning(f"No hay valores para mostrar en '{col_proyecto}'.")
         st.stop()
 
-    proyecto_sel = st.selectbox("Proyecto", valores)
+    default_project = "villa sur"
+    default_index = 0
+    for i, value in enumerate(valores):
+        if value.strip().lower() == default_project:
+            default_index = i
+            break
+
+    proyecto_sel = st.selectbox("Proyecto", valores, index=default_index)
     df_filtrado = df[df[col_proyecto].astype(str).str.strip() == proyecto_sel].copy()
     st.caption(f"Columna usada: {col_proyecto}")
+    subtab_inicial, subtab_actualizada = st.tabs(
+        ["Proyeccion inicial", "Proyeccion actualizada"]
+    )
 
     try:
         col_fase = find_col(df_filtrado, "Nombre fase", "Fase")
@@ -336,11 +394,12 @@ with tab_estado:
     nav_key = f"gantt_start::{col_proyecto}::{proyecto_sel}"
     show_all_key = f"gantt_show_all::{col_proyecto}::{proyecto_sel}"
     window_key = f"gantt_window::{col_proyecto}::{proyecto_sel}"
-    visible_days = st.selectbox(
-        "Ventana visible (dias)",
-        options=window_options,
-        index=window_options.index(default_window) if default_window in window_options else 0,
-    )
+    with subtab_inicial:
+        visible_days = st.selectbox(
+            "Ventana visible (dias)",
+            options=window_options,
+            index=window_options.index(default_window) if default_window in window_options else 0,
+        )
 
     max_start = max(total_start, total_end - visible_days + 1)
     if nav_key not in st.session_state:
@@ -352,16 +411,17 @@ with tab_estado:
         st.session_state[show_all_key] = False
         st.session_state[window_key] = visible_days
 
-    nav_prev, nav_next, nav_reset = st.columns([1, 1, 1], gap="small")
-    if nav_prev.button("Anterior", use_container_width=True):
-        st.session_state[show_all_key] = False
-        st.session_state[nav_key] = max(total_start, st.session_state[nav_key] - visible_days)
-    if nav_next.button("Siguiente", use_container_width=True):
-        st.session_state[show_all_key] = False
-        st.session_state[nav_key] = min(max_start, st.session_state[nav_key] + visible_days)
-    if nav_reset.button("Ver todo", use_container_width=True):
-        st.session_state[show_all_key] = True
-        st.session_state[nav_key] = total_start
+    with subtab_inicial:
+        nav_prev, nav_next, nav_reset = st.columns([1, 1, 1], gap="small")
+        if nav_prev.button("Anterior", use_container_width=True):
+            st.session_state[show_all_key] = False
+            st.session_state[nav_key] = max(total_start, st.session_state[nav_key] - visible_days)
+        if nav_next.button("Siguiente", use_container_width=True):
+            st.session_state[show_all_key] = False
+            st.session_state[nav_key] = min(max_start, st.session_state[nav_key] + visible_days)
+        if nav_reset.button("Ver todo", use_container_width=True):
+            st.session_state[show_all_key] = True
+            st.session_state[nav_key] = total_start
 
     if show_all_key not in st.session_state:
         st.session_state[show_all_key] = total_days <= visible_days
@@ -372,12 +432,6 @@ with tab_estado:
     else:
         visible_start = st.session_state[nav_key]
         visible_end = min(total_end, visible_start + visible_days - 1)
-
-    st.caption(
-        "Rango visible: "
-        f"{pd.Timestamp.fromordinal(int(visible_start)).strftime('%d/%m/%Y')} a "
-        f"{pd.Timestamp.fromordinal(int(visible_end)).strftime('%d/%m/%Y')}"
-    )
 
     visible_span = max(visible_end - visible_start, 1)
     pad = max(visible_span * 0.05, 1)
@@ -404,6 +458,7 @@ with tab_estado:
     proj_phase = "#98A8B8"
     real_task = "#2D8CFF"
     proj_task = "#C8D1D8"
+    alert_red = "#DC2626"
 
     header_top = n + 1.8
     month_header_bottom = n + 1.35
@@ -709,6 +764,22 @@ with tab_estado:
             visible_end,
         )
 
+        if is_phase and row["label"].strip().lower() == "info complementaria":
+            highlight_start = row["real_inicio"]
+            if pd.isna(highlight_start):
+                highlight_start = row["proj_inicio"]
+            add_highlight_business_window(
+                fig,
+                highlight_start,
+                business_days=5,
+                y0=row["y"] + 0.14,
+                y1=row["y"] + 0.32,
+                fill_color=alert_red,
+                visible_start=visible_start,
+                visible_end=visible_end,
+                label=row["label"],
+            )
+
     fig.add_shape(
         type="line",
         x0=x_left,
@@ -724,6 +795,9 @@ with tab_estado:
     )
     fig.add_trace(
         go.Bar(x=[None], y=[None], marker_color=proj_task, name="Proyectado", showlegend=True)
+    )
+    fig.add_trace(
+        go.Bar(x=[None], y=[None], marker_color=alert_red, name="Plazo 5 dias habiles", showlegend=True)
     )
 
     fig.update_layout(
@@ -752,4 +826,12 @@ with tab_estado:
         ),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    with subtab_inicial:
+        st.plotly_chart(fig, use_container_width=True)
+
+    with subtab_actualizada:
+        st.empty()
+
+with tab_resumen:
+    st.subheader("Resumen de proyectos")
+    st.dataframe(df, use_container_width=True, hide_index=True)
