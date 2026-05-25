@@ -382,11 +382,11 @@ with tab_estado:
     visible_span = max(visible_end - visible_start, 1)
     pad = max(visible_span * 0.05, 1)
 
-    x_task = visible_start - visible_span * 0.86
-    x_sol = visible_start - visible_span * 0.44
-    x_dest = visible_start - visible_span * 0.20
+    x_task = visible_start - visible_span * 0.62
+    x_sol = visible_start - visible_span * 0.29
+    x_dest = visible_start - visible_span * 0.15
     x_divider = visible_start - visible_span * 0.03
-    x_left = visible_start - visible_span * 0.92
+    x_left = visible_start - visible_span * 0.68
     x_right = visible_end + pad
     x_task_end = x_sol - visible_span * 0.05
     x_sol_end = x_dest - visible_span * 0.05
@@ -589,16 +589,16 @@ with tab_estado:
         tarea_full = row["tarea"]
         solicitante_full = row["solicitante"]
         destinatario_full = row["destinatario"]
-        tarea_text = text_weight.format(truncate_text(tarea_full, 38))
+        tarea_text = text_weight.format(truncate_text(tarea_full, 30))
         solicitante_text = (
-            text_weight.format(truncate_text(solicitante_full, 16))
+            text_weight.format(truncate_text(solicitante_full, 11))
             if row["kind"] == "phase"
-            else truncate_text(solicitante_full, 16)
+            else truncate_text(solicitante_full, 11)
         )
         destinatario_text = (
-            text_weight.format(truncate_text(destinatario_full, 16))
+            text_weight.format(truncate_text(destinatario_full, 11))
             if row["kind"] == "phase"
-            else truncate_text(destinatario_full, 16)
+            else truncate_text(destinatario_full, 11)
         )
 
         fig.add_shape(
