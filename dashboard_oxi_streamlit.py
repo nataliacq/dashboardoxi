@@ -71,11 +71,40 @@ def parse_fecha(serie: pd.Series) -> pd.Series:
     return pd.to_datetime(serie, dayfirst=True, errors="coerce")
 
 
+def count_business_days(start, end) -> int | None:
+    if pd.isna(start) or pd.isna(end):
+        return None
+    start_ts = pd.Timestamp(start)
+    end_ts = pd.Timestamp(end)
+    if end_ts < start_ts:
+        return 0
+    return len(pd.bdate_range(start_ts, end_ts))
+
+
 def truncate_text(value: str, max_chars: int) -> str:
     text = str(value or "").strip()
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3].rstrip() + "..."
+
+
+def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+
+
+def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    return "#{:02X}{:02X}{:02X}".format(*rgb)
+
+
+def lighten_color(hex_color: str, factor: float = 0.55) -> str:
+    r, g, b = hex_to_rgb(hex_color)
+    new_rgb = (
+        int(r + (255 - r) * factor),
+        int(g + (255 - g) * factor),
+        int(b + (255 - b) * factor),
+    )
+    return rgb_to_hex(new_rgb)
 
 
 def day_num(value) -> float | None:
@@ -253,9 +282,6 @@ with tab_estado:
     proyecto_sel = st.selectbox("Proyecto", valores, index=default_index)
     df_filtrado = df[df[col_proyecto].astype(str).str.strip() == proyecto_sel].copy()
     st.caption(f"Columna usada: {col_proyecto}")
-    subtab_inicial, subtab_actualizada = st.tabs(
-        ["Proyeccion inicial", "Proyeccion actualizada"]
-    )
 
     try:
         col_fase = find_col(df_filtrado, "Nombre fase", "Fase")
@@ -283,6 +309,84 @@ with tab_estado:
 
     for col in [col_real_inicio, col_real_fin, col_proj_inicio, col_proj_fin]:
         df_filtrado[col] = parse_fecha(df_filtrado[col])
+
+    resumen_df = df_filtrado.copy()
+    resumen_df["_dur_real"] = resumen_df.apply(
+        lambda r: count_business_days(r.get(col_real_inicio), r.get(col_real_fin)), axis=1
+    )
+    resumen_df["_dur_proj"] = resumen_df.apply(
+        lambda r: count_business_days(r.get(col_proj_inicio), r.get(col_proj_fin)), axis=1
+    )
+
+    inicio_real = resumen_df[col_real_inicio].dropna().min()
+    fin_real = resumen_df[col_real_fin].dropna().max()
+    fin_proyectado = resumen_df[col_proj_fin].dropna().max()
+
+    fase_actual = "-"
+    fase_actual_df = resumen_df.copy()
+    fase_actual_df["_fase_nombre"] = (
+        fase_actual_df[col_fase].fillna("").astype(str).str.strip().replace("", "Sin fase")
+    )
+    fase_actual_df["_fecha_ref"] = fase_actual_df[col_real_fin]
+    fase_actual_df["_fecha_ref"] = fase_actual_df["_fecha_ref"].fillna(fase_actual_df[col_real_inicio])
+    fase_actual_df["_fecha_ref"] = fase_actual_df["_fecha_ref"].fillna(fase_actual_df[col_proj_fin])
+    fase_actual_df["_fecha_ref"] = fase_actual_df["_fecha_ref"].fillna(fase_actual_df[col_proj_inicio])
+    fase_actual_df = fase_actual_df.dropna(subset=["_fecha_ref"]).sort_values("_fecha_ref")
+    if not fase_actual_df.empty:
+        fase_actual = str(fase_actual_df.iloc[-1]["_fase_nombre"]).strip() or "-"
+
+    dias_retraso = None
+    if pd.notna(fin_real) and pd.notna(fin_proyectado) and fin_real > fin_proyectado:
+        dias_retraso = count_business_days(fin_proyectado, fin_real)
+
+    def fmt_fecha(value) -> str:
+        if pd.isna(value):
+            return "-"
+        return pd.Timestamp(value).strftime("%d/%m/%Y")
+
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("Fase actual", fase_actual)
+    metric_cols[1].metric("Inicio real", fmt_fecha(inicio_real))
+    metric_cols[2].metric("Fin real", fmt_fecha(fin_real))
+    metric_cols[3].metric("Fin proyectado", fmt_fecha(fin_proyectado))
+    metric_cols[4].metric("Dias de retraso", dias_retraso if dias_retraso is not None else "-")
+
+    fase_counts = (
+        resumen_df[col_fase]
+        .fillna("Sin fase")
+        .astype(str)
+        .str.strip()
+        .replace("", "Sin fase")
+        .value_counts()
+        .head(8)
+        .reset_index()
+    )
+    fase_counts.columns = ["Fase", "Cantidad"]
+
+    chart_col1 = st.columns(1)[0]
+    with chart_col1:
+        fig_fases = go.Figure(
+            go.Bar(
+                x=fase_counts["Cantidad"],
+                y=fase_counts["Fase"],
+                orientation="h",
+                marker_color="#2D8CFF",
+            )
+        )
+        fig_fases.update_layout(
+            title="Tareas por fase",
+            height=280,
+            margin=dict(l=10, r=10, t=40, b=10),
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            xaxis=dict(showgrid=True, gridcolor="#E5E7EB"),
+            yaxis=dict(autorange="reversed"),
+        )
+        st.plotly_chart(fig_fases, use_container_width=True)
+
+    subtab_inicial, subtab_actualizada = st.tabs(
+        ["Proyeccion inicial", "Proyeccion actualizada"]
+    )
 
     fase_series = df_filtrado[col_fase].fillna("").astype(str).str.strip()
     fase_series = fase_series.where(fase_series != "", "Sin fase")
@@ -360,6 +464,29 @@ with tab_estado:
     n = len(rows)
     for i, row in enumerate(rows):
         row["y"] = n - 1 - i
+
+    phase_palette = [
+        "#2563EB",
+        "#0F766E",
+        "#CA8A04",
+        "#9333EA",
+        "#DC2626",
+        "#EA580C",
+        "#0891B2",
+        "#4F46E5",
+        "#BE185D",
+        "#15803D",
+    ]
+    phase_colors: dict[str, str] = {}
+    palette_idx = 0
+    current_phase = None
+    for row in rows:
+        if row["kind"] == "phase":
+            current_phase = row["label"]
+            if current_phase not in phase_colors:
+                phase_colors[current_phase] = phase_palette[palette_idx % len(phase_palette)]
+                palette_idx += 1
+        row["phase_name"] = current_phase or row["label"]
 
     date_values = []
     for row in rows:
@@ -454,10 +581,6 @@ with tab_estado:
     header_bg = "#F7FAFC"
     phase_text = "#111827"
     task_text = "#374151"
-    real_phase = "#58C6FF"
-    proj_phase = "#98A8B8"
-    real_task = "#2D8CFF"
-    proj_task = "#C8D1D8"
     alert_red = "#DC2626"
 
     header_top = n + 1.8
@@ -725,10 +848,11 @@ with tab_estado:
         )
 
         is_phase = row["kind"] == "phase"
-        real_color = real_phase if is_phase else real_task
-        proj_color = proj_phase if is_phase else proj_task
-        real_line = "#A5F3FC" if is_phase else "#93C5FD"
-        proj_line = "#E2E8F0" if is_phase else "#CBD5E1"
+        base_color = phase_colors.get(row["phase_name"], "#2563EB")
+        real_color = base_color
+        proj_color = lighten_color(base_color, 0.68)
+        real_line = lighten_color(base_color, 0.35)
+        proj_line = lighten_color(base_color, 0.82)
 
         if is_phase:
             real_y0, real_y1 = row["y"] + 0.06, row["y"] + 0.40
@@ -791,10 +915,10 @@ with tab_estado:
     )
 
     fig.add_trace(
-        go.Bar(x=[None], y=[None], marker_color=real_task, name="Real", showlegend=True)
+        go.Bar(x=[None], y=[None], marker_color="#2563EB", name="Real", showlegend=True)
     )
     fig.add_trace(
-        go.Bar(x=[None], y=[None], marker_color=proj_task, name="Proyectado", showlegend=True)
+        go.Bar(x=[None], y=[None], marker_color=lighten_color("#2563EB", 0.68), name="Proyectado", showlegend=True)
     )
     fig.add_trace(
         go.Bar(x=[None], y=[None], marker_color=alert_red, name="Plazo 5 dias habiles", showlegend=True)
