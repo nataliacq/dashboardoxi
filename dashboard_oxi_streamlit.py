@@ -552,6 +552,15 @@ with tab_estado:
                 line=dict(color=grid_color, width=1),
                 layer="below",
             )
+            fig.add_shape(
+                type="line",
+                x0=week_seg_start,
+                x1=week_seg_start,
+                y0=-0.8,
+                y1=table_header_bottom,
+                line=dict(color="#D9E6F2", width=1, dash="dot"),
+                layer="below",
+            )
             fig.add_annotation(
                 x=(week_seg_start + week_seg_end) / 2,
                 y=(table_header_bottom + week_header_bottom) / 2,
