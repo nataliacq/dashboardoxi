@@ -1,11 +1,13 @@
 from datetime import datetime
 from time import time
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 SHEET_ID = "1s05TfnAHtRQpnjX0iwOcLsWVX1rCfz_v"
+CALENDAR_CSV = Path(__file__).with_name("month_weeks_2020_2030.csv")
 
 
 def _csv_url() -> str:
@@ -20,6 +22,13 @@ def cargar_hoja() -> pd.DataFrame:
     df.columns = df.columns.str.strip()
     df = df.loc[:, ~df.columns.str.startswith("Unnamed")]
     df = df.loc[:, df.columns != ""]
+    return df
+
+
+@st.cache_data
+def cargar_calendario_semanas() -> pd.DataFrame:
+    df = pd.read_csv(CALENDAR_CSV)
+    df["year"] = pd.to_numeric(df["year"], errors="coerce").astype("Int64")
     return df
 
 
@@ -162,6 +171,12 @@ except Exception as exc:
 
 if df.empty:
     st.warning("La hoja no tiene filas para mostrar.")
+    st.stop()
+
+try:
+    calendar_df = cargar_calendario_semanas()
+except Exception as exc:
+    st.error(f"No se pudo cargar el calendario de semanas: {exc}")
     st.stop()
 
 tab_resumen, tab_estado = st.tabs(["Resumen de proyectos", "Estado por proyecto"])
@@ -390,16 +405,18 @@ with tab_estado:
     real_task = "#2D8CFF"
     proj_task = "#C8D1D8"
 
-    header_top = n + 1.0
-    header_bottom = n + 0.1
+    header_top = n + 1.8
+    month_header_bottom = n + 1.35
+    week_header_bottom = n + 1.0
+    table_header_bottom = n + 0.1
     table_header_y = n + 0.55
 
     fig.add_shape(
         type="rect",
         x0=x_left,
         x1=x_divider,
-        y0=header_bottom,
-        y1=header_top,
+        y0=table_header_bottom,
+        y1=week_header_bottom,
         fillcolor=header_bg,
         line=dict(color=grid_color, width=1),
         layer="below",
@@ -409,7 +426,18 @@ with tab_estado:
         type="rect",
         x0=x_divider,
         x1=x_right,
-        y0=header_bottom,
+        y0=table_header_bottom,
+        y1=week_header_bottom,
+        fillcolor="#FFFFFF",
+        line=dict(color=grid_color, width=1),
+        layer="below",
+    )
+
+    fig.add_shape(
+        type="rect",
+        x0=x_divider,
+        x1=x_right,
+        y0=week_header_bottom,
         y1=header_top,
         fillcolor="#FFFFFF",
         line=dict(color=grid_color, width=1),
@@ -438,10 +466,112 @@ with tab_estado:
             x0=x_line,
             x1=x_line,
             y0=-0.8,
+            y1=week_header_bottom,
+            line=dict(color=grid_color, width=1),
+            layer="below",
+        )
+    visible_start_ts = pd.Timestamp.fromordinal(int(visible_start))
+    visible_end_ts = pd.Timestamp.fromordinal(int(visible_end))
+    visible_calendar = calendar_df[
+        (calendar_df["year"] >= visible_start_ts.year)
+        & (calendar_df["year"] <= visible_end_ts.year)
+    ].copy()
+    month_tickvals = []
+    month_order = {
+        "enero": 1,
+        "febrero": 2,
+        "marzo": 3,
+        "abril": 4,
+        "mayo": 5,
+        "junio": 6,
+        "julio": 7,
+        "agosto": 8,
+        "septiembre": 9,
+        "octubre": 10,
+        "noviembre": 11,
+        "diciembre": 12,
+    }
+    visible_calendar["month_num"] = visible_calendar["mes"].map(month_order)
+    visible_calendar = visible_calendar.sort_values(["year", "month_num"])
+
+    for _, cal_row in visible_calendar.iterrows():
+        year = int(cal_row["year"])
+        month_num = int(cal_row["month_num"])
+        month_start = pd.Timestamp(year=year, month=month_num, day=1)
+        next_month = (
+            pd.Timestamp(year=year + 1, month=1, day=1)
+            if month_num == 12
+            else pd.Timestamp(year=year, month=month_num + 1, day=1)
+        )
+        month_end = next_month - pd.Timedelta(days=1)
+        seg_start = max(day_num(month_start), visible_start)
+        seg_end = min(day_num(month_end), visible_end)
+        if seg_start > seg_end:
+            continue
+
+        month_tickvals.append(seg_start)
+        fig.add_shape(
+            type="line",
+            x0=seg_start,
+            x1=seg_start,
+            y0=week_header_bottom,
             y1=header_top,
             line=dict(color=grid_color, width=1),
             layer="below",
         )
+        fig.add_annotation(
+            x=(seg_start + seg_end) / 2,
+            y=(week_header_bottom + header_top) / 2,
+            text=f"<b>{str(cal_row['mes']).capitalize()}</b>",
+            showarrow=False,
+            xanchor="center",
+            yanchor="middle",
+            font=dict(size=12, color=font_color),
+        )
+
+        week_count = int(cal_row["cantidad-semanas"])
+        for week_idx in range(1, week_count + 1):
+            week_start_day = cal_row.get(f"semana{week_idx}-inicio")
+            week_end_day = cal_row.get(f"semana{week_idx}-fin")
+            if pd.isna(week_start_day) or pd.isna(week_end_day):
+                continue
+
+            week_start = pd.Timestamp(year=year, month=month_num, day=int(week_start_day))
+            week_end = pd.Timestamp(year=year, month=month_num, day=int(week_end_day))
+            week_seg_start = max(day_num(week_start), visible_start)
+            week_seg_end = min(day_num(week_end), visible_end)
+            if week_seg_start > week_seg_end:
+                continue
+
+            fig.add_shape(
+                type="line",
+                x0=week_seg_start,
+                x1=week_seg_start,
+                y0=table_header_bottom,
+                y1=week_header_bottom,
+                line=dict(color=grid_color, width=1),
+                layer="below",
+            )
+            fig.add_annotation(
+                x=(week_seg_start + week_seg_end) / 2,
+                y=(table_header_bottom + week_header_bottom) / 2,
+                text=f"{int(week_start_day)}-{int(week_end_day)}",
+                showarrow=False,
+                xanchor="center",
+                yanchor="middle",
+                font=dict(size=10, color=font_color),
+            )
+
+    fig.add_shape(
+        type="line",
+        x0=visible_end,
+        x1=visible_end,
+        y0=table_header_bottom,
+        y1=header_top,
+        line=dict(color=grid_color, width=1),
+        layer="below",
+    )
+    month_tickvals.append(visible_end)
 
     for row in rows:
         row_bottom = row["y"] - 0.5
@@ -574,19 +704,11 @@ with tab_estado:
         type="line",
         x0=x_left,
         x1=x_right,
-        y0=header_bottom,
-        y1=header_bottom,
+        y0=table_header_bottom,
+        y1=table_header_bottom,
         line=dict(color=grid_color, width=1),
         layer="below",
     )
-
-    tickvals = list(range(int(date_min_num), int(date_max_num) + 1, 7))
-    tickvals = [v for v in tickvals if visible_start <= v <= visible_end]
-    if visible_start not in tickvals:
-        tickvals.insert(0, visible_start)
-    if visible_end not in tickvals:
-        tickvals.append(visible_end)
-    ticktext = [pd.Timestamp.fromordinal(int(v)).strftime("%d/%m") for v in tickvals]
 
     fig.add_trace(
         go.Bar(x=[None], y=[None], marker_color=real_task, name="Real", showlegend=True)
@@ -605,8 +727,9 @@ with tab_estado:
         xaxis=dict(
             range=[x_left, x_right],
             tickmode="array",
-            tickvals=tickvals,
-            ticktext=ticktext,
+            tickvals=month_tickvals,
+            ticktext=["" for _ in month_tickvals],
+            showticklabels=False,
             showgrid=True,
             gridcolor=grid_color,
             zeroline=False,
