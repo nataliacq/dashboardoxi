@@ -85,15 +85,25 @@ def add_period_trace(
     fill_color: str,
     line_color: str,
     hover_label: str,
+    visible_start: float,
+    visible_end: float,
 ):
     if pd.isna(start) or pd.isna(end):
         return
 
     start_num = day_num(start)
     end_num = day_num(end)
+
+    if end_num < visible_start or start_num > visible_end:
+        return
+
+    clipped_start = max(start_num, visible_start)
+    clipped_end = min(end_num, visible_end)
     center_y = (y0 + y1) / 2
 
     if start_num == end_num:
+        if not (visible_start <= start_num <= visible_end):
+            return
         fig.add_trace(
             go.Scatter(
                 x=[start_num],
@@ -111,8 +121,8 @@ def add_period_trace(
 
     fig.add_shape(
         type="rect",
-        x0=start_num,
-        x1=end_num,
+        x0=clipped_start,
+        x1=clipped_end,
         y0=y0,
         y1=y1,
         fillcolor=fill_color,
@@ -120,7 +130,7 @@ def add_period_trace(
         layer="above",
     )
 
-    center_x = start_num + (end_num - start_num) / 2
+    center_x = clipped_start + (clipped_end - clipped_start) / 2
     fig.add_trace(
         go.Scatter(
             x=[center_x],
@@ -289,17 +299,83 @@ with tab_estado:
     date_min_num = day_num(date_min)
     date_max_num = day_num(date_max)
     date_span = max(date_max_num - date_min_num, 1)
-    pad = max(date_span * 0.05, 1)
+    total_start = int(date_min_num)
+    total_end = int(date_max_num)
+    total_days = max(total_end - total_start + 1, 1)
 
-    x_task = date_min_num - date_span * 0.86
-    x_sol = date_min_num - date_span * 0.44
-    x_dest = date_min_num - date_span * 0.20
-    x_divider = date_min_num - date_span * 0.03
-    x_left = date_min_num - date_span * 0.92
-    x_right = date_max_num + pad
-    x_task_end = x_sol - date_span * 0.05
-    x_sol_end = x_dest - date_span * 0.05
-    x_dest_end = x_divider - date_span * 0.03
+    default_window = 60
+    if total_days <= 45:
+        default_window = total_days
+    elif total_days <= 60:
+        default_window = 60
+    elif total_days <= 90:
+        default_window = 90
+    else:
+        default_window = 120
+
+    window_options = [30, 45, 60, 90, 120, 180]
+    if total_days not in window_options and total_days < 30:
+        window_options = [total_days, *window_options]
+    window_options = sorted(set(window_options))
+
+    nav_key = f"gantt_start::{col_proyecto}::{proyecto_sel}"
+    show_all_key = f"gantt_show_all::{col_proyecto}::{proyecto_sel}"
+    window_key = f"gantt_window::{col_proyecto}::{proyecto_sel}"
+    visible_days = st.selectbox(
+        "Ventana visible (dias)",
+        options=window_options,
+        index=window_options.index(default_window) if default_window in window_options else 0,
+    )
+
+    max_start = max(total_start, total_end - visible_days + 1)
+    if nav_key not in st.session_state:
+        st.session_state[nav_key] = total_start
+    st.session_state[nav_key] = min(max(st.session_state[nav_key], total_start), max_start)
+
+    previous_window = st.session_state.get(window_key)
+    if previous_window != visible_days:
+        st.session_state[show_all_key] = False
+        st.session_state[window_key] = visible_days
+
+    nav_prev, nav_next, nav_reset = st.columns([1, 1, 1], gap="small")
+    if nav_prev.button("Anterior", use_container_width=True):
+        st.session_state[show_all_key] = False
+        st.session_state[nav_key] = max(total_start, st.session_state[nav_key] - visible_days)
+    if nav_next.button("Siguiente", use_container_width=True):
+        st.session_state[show_all_key] = False
+        st.session_state[nav_key] = min(max_start, st.session_state[nav_key] + visible_days)
+    if nav_reset.button("Ver todo", use_container_width=True):
+        st.session_state[show_all_key] = True
+        st.session_state[nav_key] = total_start
+
+    if show_all_key not in st.session_state:
+        st.session_state[show_all_key] = total_days <= visible_days
+
+    if st.session_state[show_all_key] or total_days <= visible_days:
+        visible_start = total_start
+        visible_end = total_end
+    else:
+        visible_start = st.session_state[nav_key]
+        visible_end = min(total_end, visible_start + visible_days - 1)
+
+    st.caption(
+        "Rango visible: "
+        f"{pd.Timestamp.fromordinal(int(visible_start)).strftime('%d/%m/%Y')} a "
+        f"{pd.Timestamp.fromordinal(int(visible_end)).strftime('%d/%m/%Y')}"
+    )
+
+    visible_span = max(visible_end - visible_start, 1)
+    pad = max(visible_span * 0.05, 1)
+
+    x_task = visible_start - visible_span * 0.86
+    x_sol = visible_start - visible_span * 0.44
+    x_dest = visible_start - visible_span * 0.20
+    x_divider = visible_start - visible_span * 0.03
+    x_left = visible_start - visible_span * 0.92
+    x_right = visible_end + pad
+    x_task_end = x_sol - visible_span * 0.05
+    x_sol_end = x_dest - visible_span * 0.05
+    x_dest_end = x_divider - visible_span * 0.03
 
     fig = go.Figure()
     paper_bg = "#FFFFFF"
@@ -356,7 +432,7 @@ with tab_estado:
             font=dict(size=12, color=font_color),
         )
 
-    for x_line in [x_sol - date_span * 0.04, x_dest - date_span * 0.04, x_divider]:
+    for x_line in [x_sol - visible_span * 0.04, x_dest - visible_span * 0.04, x_divider]:
         fig.add_shape(
             type="line",
             x0=x_line,
@@ -477,6 +553,8 @@ with tab_estado:
             proj_color,
             proj_line,
             "Proyectado",
+            visible_start,
+            visible_end,
         )
         add_period_trace(
             fig,
@@ -488,6 +566,8 @@ with tab_estado:
             real_color,
             real_line,
             "Real",
+            visible_start,
+            visible_end,
         )
 
     fig.add_shape(
@@ -501,8 +581,11 @@ with tab_estado:
     )
 
     tickvals = list(range(int(date_min_num), int(date_max_num) + 1, 7))
-    if int(date_max_num) not in tickvals:
-        tickvals.append(int(date_max_num))
+    tickvals = [v for v in tickvals if visible_start <= v <= visible_end]
+    if visible_start not in tickvals:
+        tickvals.insert(0, visible_start)
+    if visible_end not in tickvals:
+        tickvals.append(visible_end)
     ticktext = [pd.Timestamp.fromordinal(int(v)).strftime("%d/%m") for v in tickvals]
 
     fig.add_trace(
