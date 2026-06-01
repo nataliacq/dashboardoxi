@@ -32,22 +32,43 @@ def cargar_calendario_semanas() -> pd.DataFrame:
     return df
 
 
-def find_col(df: pd.DataFrame, *candidatos: str) -> str:
+def find_col(df: pd.DataFrame, *candidatos: str, allow_prefix: bool = False) -> str:
     import unicodedata
 
     def norm(s: str) -> str:
         s = unicodedata.normalize("NFKD", str(s))
         return "".join(c for c in s if not unicodedata.combining(c)).strip().lower()
 
+    alias_map = {
+        "solicitante": ["origen"],
+        "destiantario": ["destinatario", "destino"],
+        "destinatario": ["destiantario", "destino"],
+        "fecha solicitud": ["fecha derivado"],
+        "fecha recepcion": ["fecha recibido"],
+        "fecha recepción": ["fecha recibido"],
+    }
+
     cols_norm = {norm(c): c for c in df.columns}
+    candidatos_expandidos: list[str] = []
     for cand in candidatos:
+        candidatos_expandidos.append(cand)
+        for alias_norm in alias_map.get(norm(cand), []):
+            for col in df.columns:
+                if norm(col) == alias_norm:
+                    candidatos_expandidos.append(col)
+                    break
+
+    for cand in candidatos_expandidos:
         cand_norm = norm(cand)
         if cand_norm in cols_norm:
             return cols_norm[cand_norm]
+    if allow_prefix:
         for norm_col, real_col in cols_norm.items():
-            if norm_col.startswith(cand_norm):
-                return real_col
-    raise KeyError(f"Ninguna de {candidatos} encontrada en {list(df.columns)}")
+            for cand in candidatos_expandidos:
+                cand_norm = norm(cand)
+                if norm_col.startswith(cand_norm):
+                    return real_col
+    raise KeyError(f"Ninguna de {candidatos_expandidos} encontrada en {list(df.columns)}")
 
 
 def elegir_columna_proyecto(df: pd.DataFrame) -> str:
@@ -624,8 +645,8 @@ with tab_estado:
 
     header_positions = [
         (x_task, "Tarea"),
-        (x_sol, "Solicitante"),
-        (x_dest, "Destiantario"),
+        (x_sol, col_solicitante),
+        (x_dest, col_destinatario),
     ]
     for x_pos, text in header_positions:
         fig.add_annotation(
@@ -824,7 +845,7 @@ with tab_estado:
                 mode="markers",
                 marker=dict(size=18, color="rgba(0,0,0,0)"),
                 showlegend=False,
-                hovertemplate=f"Solicitante: {solicitante_full}<extra></extra>",
+                hovertemplate=f"{col_solicitante}: {solicitante_full}<extra></extra>",
             )
         )
         fig.add_annotation(
@@ -843,7 +864,7 @@ with tab_estado:
                 mode="markers",
                 marker=dict(size=18, color="rgba(0,0,0,0)"),
                 showlegend=False,
-                hovertemplate=f"Destiantario: {destinatario_full}<extra></extra>",
+                hovertemplate=f"{col_destinatario}: {destinatario_full}<extra></extra>",
             )
         )
 
